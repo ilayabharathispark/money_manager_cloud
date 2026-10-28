@@ -509,10 +509,11 @@ with tab_overview:
                 t_cols["Balance (₹)"] = t_cols["Balance (₹)"].map(lambda x: f"₹{x:,.2f}" if pd.notnull(x) and x != "" else "—")
 
                 def color_badge(val):
-                    if val == "debit":
-                        return "color: #FF453A; font-weight: 600;"
-                    elif val == "credit":
-                        return "color: #30D158; font-weight: 600;"
+                    v = str(val).strip().lower()
+                    if v == "debit":
+                        return "color: #FF3B30; font-weight: 700;"
+                    elif v == "credit":
+                        return "color: #34C759; font-weight: 700;"
                     return ""
 
                 styled_cat_ledger = t_cols.style.map(color_badge, subset=["Type"])
@@ -634,10 +635,11 @@ with tab_ledger:
         table_cols["Balance (₹)"] = table_cols["Balance (₹)"].map(lambda x: f"₹{x:,.2f}" if pd.notnull(x) and x != "" else "—")
 
         def color_badge(val):
-            if val == "debit":
-                return "color: #FF453A; font-weight: 600;"
-            elif val == "credit":
-                return "color: #30D158; font-weight: 600;"
+            v = str(val).strip().lower()
+            if v == "debit":
+                return "color: #FF3B30; font-weight: 700;"
+            elif v == "credit":
+                return "color: #34C759; font-weight: 700;"
             return ""
 
         styled_ledger = table_cols.style.map(color_badge, subset=["Type"])
