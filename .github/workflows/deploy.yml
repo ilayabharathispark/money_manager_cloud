@@ -1,4 +1,4 @@
-name: Deploy to Google Cloud Run ($0 Idle Cost)
+name: Deploy money_manager to Google Cloud Run 
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 env:
   SERVICE_NAME: money-manager-cloud
-  REGION: us-central1
+  REGION: asia-south1
 
 jobs:
   deploy:

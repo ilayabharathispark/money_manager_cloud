@@ -27,7 +27,7 @@ if "%GCP_PROJECT%"=="" (
     exit /b 1
 )
 
-set REGION=us-central1
+set REGION=asia-south1
 set SERVICE_NAME=money-manager-cloud
 set BUCKET_NAME=%GCP_PROJECT%-money-data
 

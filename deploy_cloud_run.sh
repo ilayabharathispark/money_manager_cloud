@@ -22,7 +22,7 @@ if [ -z "$GCP_PROJECT" ]; then
     exit 1
 fi
 
-REGION="us-central1"
+REGION="asia-south1"
 SERVICE_NAME="money-manager-cloud"
 BUCKET_NAME="${GCP_PROJECT}-money-data"
 
