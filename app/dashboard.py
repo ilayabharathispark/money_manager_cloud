@@ -7,7 +7,7 @@ Features:
 - Category Filter with Ledger & Statement CSV Export
 - Spending Overview, Trend Charts, and Day-by-Day Timeline
 - Savings & Portfolio Tracker
-- money_manager config (Bank sender, Gmail connection, AI keys)
+- MoneyManagerConfig (Bank sender, Gmail connection, AI keys)
 - Clean typography without text emojis
 """
 
@@ -40,8 +40,11 @@ from categories import CATEGORIES
 from sync import sync_emails_for_user
 
 # ── Page Configuration ────────────────────────────────────────────────────────
+FAVICON_PATH = os.path.join(os.path.dirname(__file__), "favicon.png")
+
 st.set_page_config(
     page_title="Money Manager Cloud",
+    page_icon=FAVICON_PATH if os.path.exists(FAVICON_PATH) else None,
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -317,10 +320,29 @@ with st.sidebar:
     st.markdown("**Filter Data**")
     selected_type = st.selectbox("Type", ["All", "debit", "credit"])
 
+    # Load User Data
+    txns = get_all_transactions(
+        user_id=user_id,
+        start_date=str(start_date),
+        end_date=str(end_date),
+        category="All",
+        txn_type=selected_type,
+    )
+    df = pd.DataFrame(txns) if txns else pd.DataFrame()
+
     st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
     st.markdown("<div style='font-size:0.75rem; color:#86868b; text-transform:uppercase; letter-spacing:0.08em; font-weight:600; margin-bottom:8px;'>Click a category to view ledger & export:</div>", unsafe_allow_html=True)
 
     cat_totals = get_category_totals(user_id=user_id, start_date=str(start_date), end_date=str(end_date))
+
+    # Calculate selected category stats
+    sel_cat_spent = 0.0
+    sel_cat_count = 0
+    if selected_category != "All":
+        if not df.empty:
+            cat_match = df[df["category"] == selected_category]
+            sel_cat_spent = cat_match["amount"].sum()
+            sel_cat_count = len(cat_match)
 
     if selected_category != "All":
         c_h1, c_h2 = st.columns([2.5, 1.2])
@@ -330,6 +352,23 @@ with st.sidebar:
             if st.button("Reset", key="sb_reset_cat", use_container_width=True):
                 st.session_state.selected_category = "All"
                 st.rerun()
+
+        # Cumulative amount and total number of transactions above the filter
+        st.markdown(f"""
+        <div class="glass-card" style="padding: 10px 14px; margin-bottom: 10px; border-left: 3px solid #0A84FF;">
+            <div style="font-size:0.70rem; color:#86868b; text-transform:uppercase; letter-spacing:0.06em; font-weight:600;">Selected Filter Stats</div>
+            <div style="display:flex; justify-content:space-between; align-items:baseline; margin-top: 4px;">
+                <div>
+                    <div style="font-size:0.70rem; color:#86868b;">Cumulative Amount</div>
+                    <div style="font-size:1.15rem; font-weight:700; color:#30D158;">₹{sel_cat_spent:,.2f}</div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-size:0.70rem; color:#86868b;">Total Transactions</div>
+                    <div style="font-size:1.15rem; font-weight:700; color:#0A84FF;">{sel_cat_count}</div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     if cat_totals:
         dot_css_rules = []
@@ -359,25 +398,24 @@ with st.sidebar:
                         st.session_state.selected_category = name
                     st.rerun()
 
+    if selected_category != "All":
+        # Cumulative amount and total number of transactions below the filter
+        st.markdown(f"""
+        <div style="margin-top:10px; padding:8px 12px; background:rgba(255,255,255,0.035); border-radius:10px; border:1px solid rgba(255,255,255,0.08); font-size:0.80rem; color:#86868b; display:flex; justify-content:space-between; align-items:center;">
+            <span>Cumulative: <b style="color:#ffffff;">₹{sel_cat_spent:,.2f}</b></span>
+            <span>Total: <b style="color:#0A84FF;">{sel_cat_count} txns</b></span>
+        </div>
+        """, unsafe_allow_html=True)
+
     st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
     if st.button("Sign Out", use_container_width=True):
         st.session_state.user = None
         st.rerun()
 
 
-# ── Load User Data ────────────────────────────────────────────────────────────
-txns = get_all_transactions(
-    user_id=user_id,
-    start_date=str(start_date),
-    end_date=str(end_date),
-    category="All",
-    txn_type=selected_type,
-)
-df = pd.DataFrame(txns)
-
+# ── Daily Totals & Summary Calculations ───────────────────────────────────────
 daily_totals = get_daily_totals(user_id=user_id, start_date=str(start_date), end_date=str(end_date))
 
-# ── Summary Calculations ──────────────────────────────────────────────────────
 if not df.empty:
     filter_spent = df[df["type"] == "debit"]["amount"].sum()
     filter_income = df[df["type"] == "credit"]["amount"].sum()
@@ -436,7 +474,7 @@ tab_overview, tab_timeline, tab_cats, tab_ledger, tab_portfolio, tab_settings = 
     "Category Analysis",
     "Ledger & Export",
     "Savings & Portfolio",
-    "money_manager config",
+    "MoneyManagerConfig",
 ])
 
 
@@ -492,11 +530,17 @@ with tab_overview:
         # ── Category-Filtered Ledger & Export Display ───────────────────────────
         if selected_category != "All":
             cat_txns = df[df["category"] == selected_category] if not df.empty else pd.DataFrame()
+            cat_cum_amount = cat_txns["amount"].sum() if not cat_txns.empty else 0.0
             st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
             st.markdown(
                 f"<div class='glass-card' style='padding: 20px 24px;'>"
                 f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;'>"
-                f"  <span style='font-size:1.15rem; font-weight:700; color:#f5f5f7;'>Ledger & Export: <span style='color:#0A84FF;'>{selected_category}</span> ({len(cat_txns)} records)</span>"
+                f"  <div>"
+                f"    <span style='font-size:1.15rem; font-weight:700; color:#f5f5f7;'>Ledger & Export: <span style='color:#0A84FF;'>{selected_category}</span></span>"
+                f"    <div style='color:#86868b; font-size:0.85rem; margin-top:2px;'>"
+                f"      Cumulative Amount: <b style='color:#30D158;'>₹{cat_cum_amount:,.2f}</b> &nbsp;|&nbsp; Total Transactions: <b style='color:#0A84FF;'>{len(cat_txns)}</b>"
+                f"    </div>"
+                f"  </div>"
                 f"  <span class='pill-badge'>Category Filter</span>"
                 f"</div>",
                 unsafe_allow_html=True,
@@ -615,8 +659,19 @@ with tab_ledger:
     ledger_df = df.copy()
     if selected_category != "All":
         ledger_df = ledger_df[ledger_df["category"] == selected_category]
-        ledger_title = f"Transaction Ledger for {selected_category} ({len(ledger_df)})"
-        st.markdown(f"<div style='display:flex; justify-content:space-between; align-items:center;'><b style='color:#f5f5f7; font-size:1.05rem;'>{ledger_title}</b><span class='pill-badge'>Filtered: {selected_category}</span></div>", unsafe_allow_html=True)
+        cat_cum_amount = ledger_df["amount"].sum() if not ledger_df.empty else 0.0
+        st.markdown(
+            f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;'>"
+            f"  <div>"
+            f"    <b style='color:#f5f5f7; font-size:1.05rem;'>Transaction Ledger for {selected_category}</b>"
+            f"    <div style='color:#86868b; font-size:0.85rem; margin-top:2px;'>"
+            f"      Cumulative Amount: <b style='color:#30D158;'>₹{cat_cum_amount:,.2f}</b> &nbsp;|&nbsp; Total Transactions: <b style='color:#0A84FF;'>{len(ledger_df)}</b>"
+            f"    </div>"
+            f"  </div>"
+            f"  <span class='pill-badge'>Filtered: {selected_category}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
     else:
         st.markdown(f"<b style='color:#f5f5f7; font-size:1.05rem;'>Transaction Ledger ({filter_count})</b>", unsafe_allow_html=True)
 
@@ -658,6 +713,10 @@ with tab_ledger:
 
 # ── Tab 5: Savings & Portfolio ────────────────────────────────────────────────
 with tab_portfolio:
+    if st.session_state.get("portfolio_saved_success"):
+        st.success("Portfolio values updated successfully!")
+        st.session_state["portfolio_saved_success"] = False
+
     cash_val = float(user_settings.get("cash_savings") or 0.0)
     pf_val = float(user_settings.get("pf_amount") or 0.0)
     gold_val = float(user_settings.get("gold_amount") or 0.0)
@@ -688,15 +747,57 @@ with tab_portfolio:
     with k4:
         st.markdown(f'<div class="glass-card"><div class="metric-caption"><span style="color:#BF5AF2;">●</span> Mutual Funds</div><div class="metric-number" style="color:#BF5AF2;">₹{mf_val:,.2f}</div></div>', unsafe_allow_html=True)
 
-    st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
 
-    with st.expander("Update Portfolio Values", expanded=False):
+    chart_col, form_col = st.columns([1.1, 0.9])
+
+    with chart_col:
+        st.markdown("<b style='color:#f5f5f7; font-size:1.05rem;'>Portfolio Asset Allocation</b>", unsafe_allow_html=True)
+
+        alloc_data = []
+        if cash_val > 0:
+            alloc_data.append({"Asset": "Cash Savings", "Amount": cash_val, "Color": "#30D158"})
+        if pf_val > 0:
+            alloc_data.append({"Asset": "PF Amount", "Amount": pf_val, "Color": "#0A84FF"})
+        if gold_val > 0:
+            alloc_data.append({"Asset": "Gold Investments", "Amount": gold_val, "Color": "#FFD60A"})
+        if mf_val > 0:
+            alloc_data.append({"Asset": "Mutual Funds", "Amount": mf_val, "Color": "#BF5AF2"})
+        if not alloc_data:
+            alloc_data.append({"Asset": "No Assets Configured", "Amount": 1.0, "Color": "#3a3a3c"})
+
+        alloc_df = pd.DataFrame(alloc_data)
+        fig_alloc = px.pie(
+            alloc_df,
+            values="Amount",
+            names="Asset",
+            hole=0.68,
+            color="Asset",
+            color_discrete_map={row["Asset"]: row["Color"] for row in alloc_data},
+        )
+        fig_alloc.update_traces(
+            textposition="inside",
+            textinfo="percent+label",
+            textfont=dict(size=11, color="#ffffff", family="-apple-system, SF Pro Display, sans-serif"),
+            hovertemplate="<b style='color:#ffffff; font-size:13px;'>%{label}</b><br><span style='color:#86868b;'>Amount:</span> <b style='color:#ffffff;'>₹%{value:,.2f}</b><extra></extra>",
+            marker=dict(line=dict(color="#0c0d12", width=2.5)),
+        )
+        fig_alloc.update_layout(
+            **{**PLOT_LAYOUT, "margin": dict(t=10, b=10, l=10, r=10)},
+            height=340,
+            showlegend=False,
+        )
+        st.plotly_chart(fig_alloc, use_container_width=True)
+
+    with form_col:
+        st.markdown("<b style='color:#f5f5f7; font-size:1.05rem;'>Update Portfolio Assets</b>", unsafe_allow_html=True)
+        st.markdown("<div style='color:#86868b; font-size:0.85rem; margin-bottom:12px;'>Adjust your offline assets saved to your private cloud database.</div>", unsafe_allow_html=True)
         with st.form("portfolio_form"):
             p_cash = st.number_input("Cash Savings (₹)", min_value=0.0, value=cash_val, step=1000.0)
             p_pf = st.number_input("PF Amount (₹)", min_value=0.0, value=pf_val, step=1000.0)
             p_gold = st.number_input("Gold Investments (₹)", min_value=0.0, value=gold_val, step=1000.0)
             p_mf = st.number_input("Mutual Funds (₹)", min_value=0.0, value=mf_val, step=1000.0)
-            save_p = st.form_submit_button("Save Portfolio", type="primary")
+            save_p = st.form_submit_button("Save Portfolio", type="primary", use_container_width=True)
 
             if save_p:
                 update_user_settings(
@@ -706,14 +807,18 @@ with tab_portfolio:
                     gold_amount=p_gold,
                     mutual_funds=p_mf,
                 )
-                st.success("Portfolio values updated successfully!")
+                st.session_state["portfolio_saved_success"] = True
                 st.rerun()
 
 
-# ── Tab 6: money_manager config ───────────────────────────────────────────────
+# ── Tab 6: MoneyManagerConfig ─────────────────────────────────────────────────
 with tab_settings:
-    st.markdown("### **money_manager config**")
+    st.markdown("### **MoneyManagerConfig**")
     st.markdown("<div style='color:#86868b; font-size:0.9rem; margin-bottom:16px;'>Configure your bank sender address, Gmail connection, and AI API key.</div>", unsafe_allow_html=True)
+
+    if st.session_state.get("settings_saved_success"):
+        st.success("All settings saved successfully!")
+        st.session_state["settings_saved_success"] = False
 
     with st.form("settings_form"):
         st.markdown("#### 1. Bank Alert Sender")
@@ -793,7 +898,7 @@ with tab_settings:
                 gemini_api_key=s_gemini_key,
                 groq_api_key=s_groq_key,
             )
-            st.success("Settings saved successfully!")
+            st.session_state["settings_saved_success"] = True
             st.rerun()
 
 

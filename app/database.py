@@ -451,7 +451,7 @@ def get_category_totals(user_id: int, start_date: str = None, end_date: str = No
     conn = get_user_connection(user_id)
     try:
         query = """
-            SELECT category, SUM(amount) AS total
+            SELECT category, SUM(amount) AS total, COUNT(*) AS count
             FROM transactions
             WHERE type = 'debit'
         """
