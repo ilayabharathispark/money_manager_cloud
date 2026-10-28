@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import re
+import time
 
 # Fix Windows emoji encoding issue
 if hasattr(sys.stdout, 'reconfigure') and sys.stdout.encoding != 'utf-8':
@@ -77,7 +78,7 @@ def _get_client_for_user(user_settings: dict = None):
         if not gemini_key or gemini_key.startswith("your_"):
             raise ValueError("Gemini API key not configured. Please enter your free key in Settings.")
         from google import genai
-        model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
         return "gemini", genai.Client(api_key=gemini_key), model
 
 
@@ -96,21 +97,35 @@ def _parse_with_groq(client, model: str, email_body: str) -> str:
 
 
 def _parse_with_gemini(client, model: str, email_body: str) -> str:
-    """Call Gemini API using Google GenAI SDK."""
-    try:
-        interaction = client.interactions.create(
-            model=model,
-            system_instruction=SYSTEM_PROMPT,
-            input=f"Parse this bank email:\n\n{email_body}",
-            store=False,
-        )
-        return interaction.output_text.strip()
-    except Exception:
-        response = client.models.generate_content(
-            model=model,
-            contents=f"{SYSTEM_PROMPT}\n\nParse this bank email:\n\n{email_body}",
-        )
-        return response.text.strip()
+    """Call Gemini API using Google GenAI SDK (Interactions API with auto-retry)."""
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            interaction = client.interactions.create(
+                model=model,
+                system_instruction=SYSTEM_PROMPT,
+                input=f"Parse this bank email:\n\n{email_body}",
+                store=False,
+            )
+            return interaction.output_text.strip()
+        except Exception as e:
+            err_str = str(e)
+            # If rate limited (429), back off and retry
+            if ("429" in err_str or "RESOURCE_EXHAUSTED" in err_str) and attempt < max_retries:
+                time.sleep(2.0 * attempt)
+                continue
+            # If interactions API is not supported on this endpoint, fallback to generate_content
+            try:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=f"{SYSTEM_PROMPT}\n\nParse this bank email:\n\n{email_body}",
+                )
+                return response.text.strip()
+            except Exception as e2:
+                if ("429" in str(e2) or "RESOURCE_EXHAUSTED" in str(e2)) and attempt < max_retries:
+                    time.sleep(2.0 * attempt)
+                    continue
+                raise e
 
 
 def parse_email_with_ai(email_body: str, user_settings: dict = None) -> dict | None:

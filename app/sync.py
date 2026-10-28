@@ -65,8 +65,8 @@ def sync_emails_for_user(
 
     def _parse_and_insert(em):
         msg_id = em["msg_id"]
-        # Mild spacing to prevent bursting AI rate limits
-        time.sleep(0.2)
+        # Spacing to respect API rate limits smoothly
+        time.sleep(0.5)
         parsed = parse_email_with_ai(em["body"], user_settings=settings)
         if parsed is None:
             return "not_txn", em
