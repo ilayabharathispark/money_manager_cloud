@@ -326,6 +326,35 @@ def insert_transaction(user_id: int, txn: dict) -> bool:
             conn.close()
 
 
+def insert_transactions_batch(user_id: int, txns: list[dict]) -> int:
+    """Insert a batch of transactions in a single SQLite transaction on GCS FUSE."""
+    if not txns:
+        return 0
+    init_user_db(user_id)
+    lock = _get_user_lock(user_id)
+    inserted_count = 0
+    with lock:
+        conn = get_user_connection(user_id)
+        try:
+            for txn in txns:
+                try:
+                    conn.execute("""
+                        INSERT INTO transactions
+                            (email_msg_id, date, time, type, amount, merchant, category,
+                             balance, description, raw_email)
+                        VALUES
+                            (:email_msg_id, :date, :time, :type, :amount, :merchant,
+                             :category, :balance, :description, :raw_email)
+                    """, txn)
+                    inserted_count += 1
+                except sqlite3.IntegrityError:
+                    pass
+            conn.commit()
+            return inserted_count
+        finally:
+            conn.close()
+
+
 def get_all_synced_ids(user_id: int) -> set[str]:
     """Return all email_msg_ids already processed or deleted for this user."""
     init_user_db(user_id)

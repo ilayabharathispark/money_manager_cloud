@@ -295,7 +295,7 @@ with st.sidebar:
                 start_date=str(start_date),
                 end_date=str(end_date),
                 progress_callback=on_sync_progress,
-                max_workers=3,
+                max_workers=6,
             )
             progress_bar.empty()
             sync_status.empty()

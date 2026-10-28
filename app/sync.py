@@ -19,7 +19,8 @@ from ai_parser import parse_email_with_ai
 from database import (
     get_user_settings,
     get_all_synced_ids,
-    insert_transaction,
+    insert_transactions_batch,
+    mark_emails_as_deleted,
 )
 
 
@@ -28,7 +29,7 @@ def sync_emails_for_user(
     start_date: str = None,
     end_date: str = None,
     progress_callback=None,
-    max_workers: int = 3,
+    max_workers: int = 6,
 ) -> dict:
     """
     Fetch new bank emails for user_id, parse them with AI concurrently, and save to their private database.
@@ -59,17 +60,17 @@ def sync_emails_for_user(
     if progress_callback:
         progress_callback(0.15, f"Parsing {total_emails} emails with AI...")
 
-    inserted = 0
-    skipped_not_txn = 0
+    txns_to_insert = []
+    non_txns_to_mark = []
     completed_count = 0
 
-    def _parse_and_insert(em):
+    def _parse_single(em):
         msg_id = em["msg_id"]
-        # Spacing to respect API rate limits smoothly
-        time.sleep(0.5)
+        # Mild spacing to prevent bursting rate limits
+        time.sleep(0.05)
         parsed = parse_email_with_ai(em["body"], user_settings=settings)
         if parsed is None:
-            return "not_txn", em
+            return "not_txn", msg_id
 
         txn = {
             "email_msg_id": msg_id,
@@ -83,24 +84,35 @@ def sync_emails_for_user(
             "description":  parsed.get("description", ""),
             "raw_email":    em["body"],
         }
-        success = insert_transaction(user_id, txn)
-        return ("inserted" if success else "duplicate"), txn
+        return "txn", txn
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_parse_and_insert, em): em for em in emails}
+        futures = {executor.submit(_parse_single, em): em for em in emails}
         for future in as_completed(futures):
             completed_count += 1
             status, data = future.result()
-            if status == "inserted":
-                inserted += 1
-            elif status == "not_txn":
-                skipped_not_txn += 1
+            if status == "txn":
+                txns_to_insert.append(data)
+            else:
+                non_txns_to_mark.append(data)
 
             if progress_callback:
-                fraction = 0.15 + 0.85 * (completed_count / total_emails)
-                progress_callback(fraction, f"Parsed {completed_count}/{total_emails} bank emails...")
+                fraction = 0.15 + 0.75 * (completed_count / total_emails)
+                progress_callback(fraction, f"Parsed {completed_count}/{total_emails} bank emails with AI...")
+
+    # Fast batch insert all valid transactions in ONE atomic database write
+    if progress_callback:
+        progress_callback(0.92, "Saving transactions to private database...")
+
+    inserted = insert_transactions_batch(user_id, txns_to_insert)
+
+    # Permanently record non-transaction emails (OTPs, statements, promos) so they never re-sync
+    if non_txns_to_mark:
+        mark_emails_as_deleted(user_id, non_txns_to_mark)
+
+    skipped_count = len(non_txns_to_mark)
 
     if progress_callback:
         progress_callback(1.0, f"Sync complete! Added {inserted} new transactions.")
 
-    return {"inserted": inserted, "skipped": skipped_not_txn, "total": total_emails}
+    return {"inserted": inserted, "skipped": skipped_count, "total": total_emails}

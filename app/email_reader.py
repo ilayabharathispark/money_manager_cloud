@@ -7,6 +7,7 @@ Supports dual sync methods:
 
 import os
 import sys
+import re
 import base64
 import email
 from email import policy
@@ -19,6 +20,50 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Fix Windows emoji encoding issue
 if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
+
+
+def _extract_body_text(payload: dict) -> str:
+    """Recursively search for plain text or HTML body across all MIME parts."""
+    if not payload:
+        return ""
+    data = payload.get("body", {}).get("data")
+    mime = payload.get("mimeType", "")
+    if data and mime.startswith("text/plain"):
+        try:
+            return base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="replace")
+        except Exception:
+            pass
+
+    parts = payload.get("parts", [])
+    # 1. Search text/plain parts recursively
+    for part in parts:
+        if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
+            try:
+                return base64.urlsafe_b64decode(part["body"]["data"] + "==").decode("utf-8", errors="replace")
+            except Exception:
+                pass
+        if part.get("parts"):
+            nested = _extract_body_text(part)
+            if nested:
+                return nested
+
+    # 2. HTML fallback stripped of tags
+    for part in parts:
+        if part.get("mimeType") == "text/html" and part.get("body", {}).get("data"):
+            try:
+                html = base64.urlsafe_b64decode(part["body"]["data"] + "==").decode("utf-8", errors="replace")
+                return re.sub(r'<[^>]+>', ' ', html)
+            except Exception:
+                pass
+
+    if data:
+        try:
+            raw = base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="replace")
+            return re.sub(r'<[^>]+>', ' ', raw)
+        except Exception:
+            pass
+
+    return payload.get("snippet", "")
 
 
 # ── Method 1: IMAP with Gmail App Password (Zero GCP friction) ─────────────────
@@ -194,19 +239,8 @@ def _fetch_via_oauth(settings: dict, start_date: str = None, end_date: str = Non
                 subject = next((h["value"] for h in headers if h["name"].lower() == "subject"), "")
                 date_val = next((h["value"] for h in headers if h["name"].lower() == "date"), "")
 
-                # Extract body
-                body = ""
-                payload = msg.get("payload", {})
-                if "body" in payload and payload["body"].get("data"):
-                    body = base64.urlsafe_b64decode(payload["body"]["data"] + "==").decode("utf-8", errors="replace")
-                else:
-                    parts = payload.get("parts", [])
-                    for part in parts:
-                        if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
-                            body = base64.urlsafe_b64decode(part["body"]["data"] + "==").decode("utf-8", errors="replace")
-                            break
-                if not body:
-                    body = msg.get("snippet", "")
+                # Extract body with full nested MIME and HTML support
+                body = _extract_body_text(msg.get("payload", {}))
 
                 return {
                     "msg_id": msg_id,
