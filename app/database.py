@@ -39,31 +39,58 @@ def _get_user_lock(user_id: int) -> threading.Lock:
         return _locks[user_id]
 
 
+def _cleanup_wal_files(db_path: str):
+    """Remove any orphaned -shm and -wal files created by earlier WAL runs on GCS FUSE."""
+    for ext in ["-shm", "-wal", "-journal"]:
+        p = db_path + ext
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+
+
 def get_auth_connection() -> sqlite3.Connection:
-    """Return a connection to the central auth.db."""
-    os.makedirs(DATA_DIR, exist_ok=True)
-    conn = sqlite3.connect(AUTH_DB_PATH, timeout=30.0, check_same_thread=False)
+    """Return a connection to the central auth.db with GCS FUSE safe in-memory journal mode."""
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+    except Exception:
+        pass
+    _cleanup_wal_files(AUTH_DB_PATH)
+    conn = sqlite3.connect(AUTH_DB_PATH, timeout=60.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA busy_timeout=30000;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
+    try:
+        conn.execute("PRAGMA journal_mode=MEMORY;")
+        conn.execute("PRAGMA temp_store=MEMORY;")
+        conn.execute("PRAGMA busy_timeout=60000;")
+        conn.execute("PRAGMA synchronous=OFF;")
+    except Exception:
+        pass
     return conn
 
 
 def get_user_db_path(user_id: int) -> str:
     """Return path to a specific user's database file."""
-    os.makedirs(USERS_DIR, exist_ok=True)
+    try:
+        os.makedirs(USERS_DIR, exist_ok=True)
+    except Exception:
+        pass
     return os.path.join(USERS_DIR, f"user_{user_id}.db")
 
 
 def get_user_connection(user_id: int) -> sqlite3.Connection:
-    """Return a connection to a specific user's private database."""
+    """Return a connection to a specific user's private database with GCS FUSE safe in-memory journal mode."""
     db_path = get_user_db_path(user_id)
-    conn = sqlite3.connect(db_path, timeout=30.0, check_same_thread=False)
+    _cleanup_wal_files(db_path)
+    conn = sqlite3.connect(db_path, timeout=60.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA busy_timeout=30000;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
+    try:
+        conn.execute("PRAGMA journal_mode=MEMORY;")
+        conn.execute("PRAGMA temp_store=MEMORY;")
+        conn.execute("PRAGMA busy_timeout=60000;")
+        conn.execute("PRAGMA synchronous=OFF;")
+    except Exception:
+        pass
     return conn
 
 

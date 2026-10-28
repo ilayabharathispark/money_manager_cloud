@@ -28,5 +28,5 @@ RUN mkdir -p /data/users
 
 EXPOSE 8080
 
-# Run Streamlit on Cloud Run's dynamic $PORT
-CMD streamlit run app/dashboard.py --server.port=${PORT} --server.address=0.0.0.0 --server.headless=true
+# Run Streamlit on Cloud Run's dynamic $PORT with exec
+ENTRYPOINT ["sh", "-c", "exec streamlit run app/dashboard.py --server.port=${PORT:-8080} --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false"]

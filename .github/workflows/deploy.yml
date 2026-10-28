@@ -60,8 +60,9 @@ jobs:
             --min-instances 0 \
             --max-instances 1 \
             --concurrency 80 \
-            --memory 512Mi \
+            --memory 1Gi \
             --cpu 1 \
+            --timeout 300 \
             --set-env-vars DATA_DIR=/data \
             --add-volume name=money-data,type=cloud-storage,bucket="${BUCKET_NAME}" \
             --add-volume-mount volume=money-data,mount-path=/data
