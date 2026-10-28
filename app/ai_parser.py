@@ -130,7 +130,7 @@ def _parse_with_gemini(client, model: str, email_body: str) -> str:
 
 def parse_email_with_ai(email_body: str, user_settings: dict = None) -> dict | None:
     """
-    Parse a bank alert email using Gemini or Groq.
+    Parse a bank alert email using Gemini or Groq with automatic retry on transient failure.
     Respects individual user configuration.
     Returns a dict with transaction details, or None if not a transaction.
     """
@@ -140,35 +140,45 @@ def parse_email_with_ai(email_body: str, user_settings: dict = None) -> dict | N
         print(f"⚠️ AI Client Init error: {e}")
         return None
 
-    raw = ""
-    try:
-        if provider == "groq":
-            raw = _parse_with_groq(client, model, email_body)
-        else:
-            raw = _parse_with_gemini(client, model, email_body)
+    max_parse_attempts = 2
+    for attempt in range(1, max_parse_attempts + 1):
+        raw = ""
+        try:
+            if provider == "groq":
+                raw = _parse_with_groq(client, model, email_body)
+            else:
+                raw = _parse_with_gemini(client, model, email_body)
 
-        raw = re.sub(r"^```(?:json)?\s*", "", raw)
-        raw = re.sub(r"\s*```$", "", raw)
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```$", "", raw)
 
-        data = json.loads(raw)
+            data = json.loads(raw)
 
-        if not data.get("is_transaction", True):
+            if not data.get("is_transaction", True):
+                return None
+
+            category = validate_category(data.get("category", ""))
+            if category == "Other":
+                category = classify_merchant(
+                    data.get("merchant", ""),
+                    data.get("description", ""),
+                )
+            data["category"] = category
+            data["amount"] = float(data.get("amount", 0))
+
+            return data
+
+        except json.JSONDecodeError as e:
+            if attempt < max_parse_attempts:
+                time.sleep(1.0)
+                continue
+            print(f"⚠️ AI returned invalid JSON: {e}\nRaw output: {raw[:300]}")
+            return None
+        except Exception as e:
+            if attempt < max_parse_attempts:
+                time.sleep(1.5 * attempt)
+                continue
+            print(f"⚠️ AI parsing error ({provider}): {e}")
             return None
 
-        category = validate_category(data.get("category", ""))
-        if category == "Other":
-            category = classify_merchant(
-                data.get("merchant", ""),
-                data.get("description", ""),
-            )
-        data["category"] = category
-        data["amount"] = float(data.get("amount", 0))
-
-        return data
-
-    except json.JSONDecodeError as e:
-        print(f"⚠️ AI returned invalid JSON: {e}\nRaw output: {raw[:300]}")
-        return None
-    except Exception as e:
-        print(f"⚠️ AI parsing error ({provider}): {e}")
-        return None
+    return None

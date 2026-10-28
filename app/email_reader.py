@@ -13,7 +13,7 @@ from email import policy
 import imaplib
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Fix Windows emoji encoding issue
@@ -54,8 +54,9 @@ def _fetch_via_imap(settings: dict, start_date: str = None, end_date: str = None
                 pass
         if end_date:
             try:
-                d_obj = datetime.strptime(end_date, "%Y-%m-%d")
-                criteria.append(f'(BEFORE "{d_obj.strftime("%d-%b-%Y")}")')
+                # Add 1 day so end_date is inclusive (IMAP BEFORE is strictly exclusive)
+                d_end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+                criteria.append(f'(BEFORE "{d_end.strftime("%d-%b-%Y")}")')
             except Exception:
                 pass
 
@@ -65,9 +66,6 @@ def _fetch_via_imap(settings: dict, start_date: str = None, end_date: str = None
             return []
 
         msg_nums = data[0].split()
-        # Grab the newest emails first (up to 300)
-        msg_nums = msg_nums[-300:]
-
         emails = []
 
         for num in reversed(msg_nums):
@@ -151,8 +149,15 @@ def _fetch_via_oauth(settings: dict, start_date: str = None, end_date: str = Non
 
     token_info = json.loads(token_str)
     creds = Credentials.from_authorized_user_info(token_info)
-    service = build("gmail", "v1", credentials=creds, cache_discovery=False)
 
+    _oauth_local = threading.local()
+
+    def _get_service():
+        if not hasattr(_oauth_local, "service") or _oauth_local.service is None:
+            _oauth_local.service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+        return _oauth_local.service
+
+    service = _get_service()
     sender = settings.get("bank_email_sender") or os.getenv("BANK_EMAIL_SENDER", "alerts@yourbank.com")
     already_synced_ids = already_synced_ids or set()
 
@@ -160,9 +165,14 @@ def _fetch_via_oauth(settings: dict, start_date: str = None, end_date: str = Non
     if start_date:
         query += f" after:{start_date.replace('-', '/')}"
     if end_date:
-        query += f" before:{end_date.replace('-', '/')}"
+        try:
+            # Add 1 day so end_date is inclusive (Gmail 'before' is strictly exclusive)
+            d_next = (datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y/%m/%d")
+            query += f" before:{d_next}"
+        except Exception:
+            query += f" before:{end_date.replace('-', '/')}"
 
-    results = service.users().messages().list(userId="me", q=query, maxResults=300).execute()
+    results = service.users().messages().list(userId="me", q=query, maxResults=500).execute()
     messages = results.get("messages", [])
     if not messages:
         return []
@@ -175,35 +185,41 @@ def _fetch_via_oauth(settings: dict, start_date: str = None, end_date: str = Non
     emails = []
 
     def _download_single(msg_id):
-        try:
-            msg = service.users().messages().get(userId="me", id=msg_id, format="full").execute()
-            headers = msg.get("payload", {}).get("headers", [])
-            subject = next((h["value"] for h in headers if h["name"].lower() == "subject"), "")
-            date_val = next((h["value"] for h in headers if h["name"].lower() == "date"), "")
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                svc = _get_service()
+                msg = svc.users().messages().get(userId="me", id=msg_id, format="full").execute()
+                headers = msg.get("payload", {}).get("headers", [])
+                subject = next((h["value"] for h in headers if h["name"].lower() == "subject"), "")
+                date_val = next((h["value"] for h in headers if h["name"].lower() == "date"), "")
 
-            # Extract body
-            body = ""
-            payload = msg.get("payload", {})
-            if "body" in payload and payload["body"].get("data"):
-                body = base64.urlsafe_b64decode(payload["body"]["data"] + "==").decode("utf-8", errors="replace")
-            else:
-                parts = payload.get("parts", [])
-                for part in parts:
-                    if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
-                        body = base64.urlsafe_b64decode(part["body"]["data"] + "==").decode("utf-8", errors="replace")
-                        break
-            if not body:
-                body = msg.get("snippet", "")
+                # Extract body
+                body = ""
+                payload = msg.get("payload", {})
+                if "body" in payload and payload["body"].get("data"):
+                    body = base64.urlsafe_b64decode(payload["body"]["data"] + "==").decode("utf-8", errors="replace")
+                else:
+                    parts = payload.get("parts", [])
+                    for part in parts:
+                        if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
+                            body = base64.urlsafe_b64decode(part["body"]["data"] + "==").decode("utf-8", errors="replace")
+                            break
+                if not body:
+                    body = msg.get("snippet", "")
 
-            return {
-                "msg_id": msg_id,
-                "subject": subject,
-                "date": date_val,
-                "body": body,
-            }
-        except Exception as e:
-            print(f"Error fetching {msg_id}: {e}")
-            return None
+                return {
+                    "msg_id": msg_id,
+                    "subject": subject,
+                    "date": date_val,
+                    "body": body,
+                }
+            except Exception as e:
+                if attempt < max_retries:
+                    time.sleep(1.0 * attempt)
+                    continue
+                print(f"⚠️ Error fetching message {msg_id}: {e}")
+                return None
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(_download_single, mid): mid for mid in new_ids}
