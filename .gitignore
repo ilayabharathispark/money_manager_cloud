@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Environment variables & secrets
+.env
+.env.*
+*.json
+!app/
+credentials.json
+gmail_token.json
+
+# Local databases & user data
+data/*.db
+data/users/
+*.sqlite3
+
+# OS generated
+.DS_Store
+Thumbs.db

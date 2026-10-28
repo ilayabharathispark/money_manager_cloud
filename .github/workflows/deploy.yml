@@ -1,0 +1,75 @@
+name: Deploy to Google Cloud Run ($0 Idle Cost)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  SERVICE_NAME: money-manager-cloud
+  REGION: us-central1
+
+jobs:
+  deploy:
+    name: Deploy to Cloud Run
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🔐 Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: ⚙️ Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: 🚀 Enable Google Cloud APIs
+        run: |
+          gcloud services enable \
+            run.googleapis.com \
+            storage.googleapis.com \
+            artifactregistry.googleapis.com \
+            cloudbuild.googleapis.com
+
+      - name: 🪣 Ensure Persistent Storage Bucket Exists
+        run: |
+          BUCKET_NAME="${{ secrets.GCP_PROJECT_ID }}-money-data"
+          if ! gcloud storage buckets describe "gs://${BUCKET_NAME}" &>/dev/null; then
+            echo "Creating bucket gs://${BUCKET_NAME} in ${{ env.REGION }}..."
+            gcloud storage buckets create "gs://${BUCKET_NAME}" --location="${{ env.REGION }}" --uniform-bucket-level-access
+          else
+            echo "Bucket gs://${BUCKET_NAME} already exists."
+          fi
+
+      - name: 🚢 Deploy to Cloud Run (Scale to Zero / Request-Based)
+        run: |
+          BUCKET_NAME="${{ secrets.GCP_PROJECT_ID }}-money-data"
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --source . \
+            --region ${{ env.REGION }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --min-instances 0 \
+            --max-instances 1 \
+            --concurrency 80 \
+            --memory 512Mi \
+            --cpu 1 \
+            --set-env-vars DATA_DIR=/data \
+            --add-volume name=money-data,type=cloud-storage,bucket="${BUCKET_NAME}" \
+            --add-volume-mount volume=money-data,mount-path=/data
+
+      - name: 🎉 Show Service URL
+        run: |
+          URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} --region ${{ env.REGION }} --format 'value(status.url)')
+          echo "================================================================="
+          echo "✅ MONEY MANAGER CLOUD SUCCESSFULLY DEPLOYED!"
+          echo "🌐 URL: $URL"
+          echo "================================================================="
